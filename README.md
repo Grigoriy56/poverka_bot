@@ -1,1 +1,0 @@
-poverka_bot
