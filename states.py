@@ -3,7 +3,7 @@ from aiogram.dispatcher import FSMContext
 
 
 class Test(StatesGroup):
-    nothing = State()
+    wait = State()
     start = State()
     st_count = State()
     st_temp = State()

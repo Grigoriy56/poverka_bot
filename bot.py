@@ -6,13 +6,13 @@ from states import *
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from data import *
-from datetime import timedelta, date
+from datetime import date, timedelta
+import os.path
 import openpyxl
 from openpyxl.styles import PatternFill, Font
 from config import TOKEN
-from work import create_excel, add_line, preparation
+from create_excel import create_excel, add_line, preparation
 
-line = 2 #эта переменная хранит строку, куда нужно записывать значение
 bot = Bot(token=TOKEN)
 
 dp = Dispatcher(bot, storage=MemoryStorage())
@@ -27,37 +27,54 @@ button_3 = KeyboardButton(counter_list[2])
 button_4 = KeyboardButton(counter_list[3])
 button_5 = KeyboardButton(counter_list[4])
 button_6 = KeyboardButton(counter_list[5])
+button_old = KeyboardButton('Получить отсчёт за прошедшую неделю')
+
+cancel = 'Сбросить и начать заново'
+button_cancel = KeyboardButton(cancel)
 
 markup_1 = ReplyKeyboardMarkup(resize_keyboard=True).row(button_1, button_2, button_3)
 markup_1.row(button_4, button_5, button_6)
 
+markup_1.row(button_old)
+
 temp = ['Горячая', 'Холодная']
 button_hot = KeyboardButton(temp[0])
 button_cold = KeyboardButton(temp[1])
-markup_temp = ReplyKeyboardMarkup(resize_keyboard=True).add(button_hot, button_cold)
+markup_temp = ReplyKeyboardMarkup(resize_keyboard=True).add(button_hot, button_cold).add(button_cancel)
 
 dates = ['Сегодня', 'Ввести дату']
 button_today = KeyboardButton(dates[0])
 button_date = KeyboardButton(dates[1])
-markup_date = ReplyKeyboardMarkup(resize_keyboard=True).add(button_today, button_date)
+markup_date = ReplyKeyboardMarkup(resize_keyboard=True).add(button_today, button_date).add(button_cancel)
 ###
 
 
 # learn answer on start
-@dp.message_handler(commands=['start'], state="*")
+
+if date.weekday(date.today()) == 3:
+    now = date.today()
+    if not os.path.exists(f'poverka/poverka{now}.xlsx'):
+        create_excel(str(now))
+    old = now - timedelta(weeks=1)
+
+
+
+@dp.message_handler(state=None)
 async def process_start_command(message: types.Message):
-    await message.reply('Привет, выбери счётчик из списка', reply_markup=markup_1, reply=False)
+    await message.reply('Привет, выбери счётчик из списка. ', reply_markup=markup_1, reply=False)
     await Test.start.set()
 
 
 @dp.message_handler(state=Test.start)
-async def echo_message(msg: types.Message, state: FSMContext):
+async def echo_message(msg: types.Message):
     if msg.text in counter_list:
         global gos_number    #запоминиаем ключ для словаря со счётчиками
         gos_number = msg.text
         await bot.send_message(msg.from_user.id, 'Горячая или холодная?', reply_markup=markup_temp)
         await Test.st_count.set()
-        await state.update_data(answer1=gos_number) # в состоянии запоминаю номер счётчика
+    elif msg.text == 'Получить отсчёт за прошедшую неделю':
+        with open(f'poverka/poverka{old}.xlsx', 'rb') as file:
+            await bot.send_document(msg.from_user.id, file, caption='Держи, друг')
     else:
         await bot.send_message(msg.from_user.id, 'Счётчик не в списке. Начните заново. /start')
         await Test.start.set()
@@ -66,27 +83,57 @@ async def echo_message(msg: types.Message, state: FSMContext):
 @dp.message_handler(state=Test.st_count)
 async def temp_message(msg: types.Message):
     global temp_now #переменная, чтобы далее выбрать температуру из словаря
+    if msg.text == cancel:
+        await Test.start.set()
+        await bot.send_message(msg.from_user.id, 'Попробуем ещё раз?', reply_markup=markup_1)
     if msg.text == temp[0]:
         temp_now = 2
+        await Test.st_temp.set()
+        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка?', reply_markup=markup_date)
     elif msg.text == temp[1]:
         temp_now = 1
+        await Test.st_temp.set()
+        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка?', reply_markup=markup_date)
 
-    await Test.st_temp.set()
-    await bot.send_message(msg.from_user.id, 'Когда была произведена поверка?', reply_markup=markup_date)
+
 
 
 @dp.message_handler(state=Test.st_temp)
-async def temp_message(msg: types.Message):
-        global date_now
+async def date_message(msg: types.Message):
+    if msg.text == cancel:
+        await Test.start.set()
+        await bot.send_message(msg.from_user.id, 'Попробуем ещё раз?', reply_markup=markup_1)
+    global date_now
+    if msg.text == dates[0]:
+        date_now = date.today()
+        add_line(preparation(gos_number, temp_now, date_now), now)
+        await Test.start.set()
+        await bot.send_message(msg.from_user.id, 'Занесено в таблицу успешно. Можем повторить.', reply_markup=markup_1)
+    if msg.text == dates[1]:
+        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка?', reply_markup=markup_date)
+        await Test.wait.set()
 
-        if msg.text == dates[0]:
-            date_now = date.today()
 
-        if msg.text == dates[1]:
-            '''Макар, доделывай ручной ввод данных'''
-            pass
+@dp.message_handler(state=Test.wait)
+async def other_date_message(msg: types.Message):
+    if msg.text == cancel:
+        await Test.start.set()
+        await bot.send_message(msg.from_user.id, 'Попробуем ещё раз?', reply_markup=markup_1)
+    lst = msg.text.split('-')
+    try:
+        date_now = date(year=int(lst[0]), month=int(lst[1]), day=int(lst[2]))
+        add_line(preparation(gos_number, temp_now, date_now), now)
+        await bot.send_message(msg.from_user.id, 'Занесено в таблицу успешно. Можем повторить.', reply_markup=markup_1)
+        await Test.start.set()
 
-        add_line(preparation(gos_number, temp_now, date_now), line, 1)
+    except ValueError:
+        await bot.send_message(msg.from_user.id, 'Ты ошибся номером, друг. Введи ещё раз.')
+    except IndexError:
+        await bot.send_message(msg.from_user.id, 'Ты ошибся номером, друг. Введи ещё раз.')
+
+
+
+
 
 
 
