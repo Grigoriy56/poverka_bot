@@ -4,19 +4,15 @@ from aiogram.utils import executor
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from states import *
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from data import *
 from datetime import date, timedelta
 import os.path
-import openpyxl
-from openpyxl.styles import PatternFill, Font
 from config import TOKEN
 from create_excel import create_excel, add_line, preparation
 
 bot = Bot(token=TOKEN)
 
 dp = Dispatcher(bot, storage=MemoryStorage())
-dp.middleware.setup(LoggingMiddleware())
 
 ###
 counter_list = list(counter.keys())
@@ -50,17 +46,25 @@ markup_date = ReplyKeyboardMarkup(resize_keyboard=True).add(button_today, button
 
 
 # learn answer on start
+now = date.today()
 
-if date.weekday(date.today()) == 3:
-    now = date.today()
+
+if date.weekday(now) == 3:
     if not os.path.exists(f'poverka/poverka{now}.xlsx'):
         create_excel(str(now))
     old = now - timedelta(weeks=1)
+else:
+    while date.weekday(now) != 3:
+        now -= timedelta(days=1)
+
+    old = now - timedelta(weeks=1)
+    if not os.path.exists(f'poverka/poverka{now}.xlsx'):
+        create_excel(str(now))
 
 
-
-@dp.message_handler(state=None)
+@dp.message_handler(commands=['start'])
 async def process_start_command(message: types.Message):
+
     await message.reply('Привет, выбери счётчик из списка. ', reply_markup=markup_1, reply=False)
     await Test.start.set()
 
@@ -73,10 +77,10 @@ async def echo_message(msg: types.Message):
         await bot.send_message(msg.from_user.id, 'Горячая или холодная?', reply_markup=markup_temp)
         await Test.st_count.set()
     elif msg.text == 'Получить отсчёт за прошедшую неделю':
-        with open(f'poverka/poverka{old}.xlsx', 'rb') as file:
+        with open(f'poverka/poverka{now}.xlsx', 'rb') as file:
             await bot.send_document(msg.from_user.id, file, caption='Держи, друг')
     else:
-        await bot.send_message(msg.from_user.id, 'Счётчик не в списке. Начните заново. /start')
+        await bot.send_message(msg.from_user.id, 'Счётчик не в списке. Начните заново. /start', reply_markup=markup_1)
         await Test.start.set()
 
 
@@ -87,15 +91,13 @@ async def temp_message(msg: types.Message):
         await Test.start.set()
         await bot.send_message(msg.from_user.id, 'Попробуем ещё раз?', reply_markup=markup_1)
     if msg.text == temp[0]:
-        temp_now = 2
-        await Test.st_temp.set()
-        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка?', reply_markup=markup_date)
-    elif msg.text == temp[1]:
         temp_now = 1
         await Test.st_temp.set()
-        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка?', reply_markup=markup_date)
-
-
+        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка? Введи в формате: YYYY-MM-DD', reply_markup=markup_date)
+    elif msg.text == temp[1]:
+        temp_now = 2
+        await Test.st_temp.set()
+        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка? Введи в формате: YYYY-MM-DD', reply_markup=markup_date)
 
 
 @dp.message_handler(state=Test.st_temp)
@@ -110,7 +112,7 @@ async def date_message(msg: types.Message):
         await Test.start.set()
         await bot.send_message(msg.from_user.id, 'Занесено в таблицу успешно. Можем повторить.', reply_markup=markup_1)
     if msg.text == dates[1]:
-        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка?', reply_markup=markup_date)
+        await bot.send_message(msg.from_user.id, 'Когда была произведена поверка? Введи в формате: YYYY-MM-DD', reply_markup=markup_date)
         await Test.wait.set()
 
 
@@ -127,18 +129,9 @@ async def other_date_message(msg: types.Message):
         await Test.start.set()
 
     except ValueError:
-        await bot.send_message(msg.from_user.id, 'Ты ошибся номером, друг. Введи ещё раз.')
+        await bot.send_message(msg.from_user.id, 'Ты ошибся номером, друг. Введи ещё раз в формате: YYYY-MM-DD')
     except IndexError:
-        await bot.send_message(msg.from_user.id, 'Ты ошибся номером, друг. Введи ещё раз.')
-
-
-
-
-
-
-
-
-
+        await bot.send_message(msg.from_user.id, 'Ты ошибся номером, друг. Введи ещё раз в формате: YYYY-MM-DD')
 
 
 if __name__ == '__main__':
